@@ -1,0 +1,238 @@
+---
+title: "Harmful and Damaging Weather Events in the United States 1950-2011"
+author: "Meenakshi Parameshwaran"
+date: "16 January 2016"
+output: html_document
+---
+
+## Synopsis
+
+#### Introduction
+
+The basic goal of this research project is to explore the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database and answer the following two questions about severe weather events:
+
+#### Research questions
+
+1. Across the United States, which types of events (as indicated in the 𝙴𝚅𝚃𝚈𝙿𝙴 variable) are most harmful with respect to population health?
+2. Across the United States, which types of events have the greatest economic consequences?
+
+#### Methods
+The data was processed so as to identify the key variables measuring harm to population health (injuries and fatalities) and to the economy (property damage and crop damage), alongside a variable indicating type of weather event. Economic variables were transformed so as to measure the cost of damage in US millions of dollars. Finally, the following four values were calculated for each type of severe weather event, and then the top 10 weather events with the greatest values were plotted:
+
+- total number of fatalities
+- total number of injuries
+- total property damage (millions of dollars)
+- total crop damage (millions of dollars)
+
+#### Results
+
+**Tornadoes** have been the most harmful weather event by far for *population health*, causing thousands of fatalities and injuries. **Floods** have been the weather event with the greatest *economic consequences* in terms of *both* property and crop damage, whilst **drought** has been the worst type of weather for crop damage alone.
+
+
+## Data Processing
+Before any analysis can take place, I have to download and read-in the NOAA severe weather events data. I do this in the code chunk below.
+
+#### Loading data
+
+```{r getdata, cache=T}
+# show session info for reproducibility
+sessionInfo()
+
+# make a directory for the data
+mydirectory <- "storm_data"
+if(!file.exists(mydirectory)) {dir.create(mydirectory)}
+
+# set the working directory
+setwd(mydirectory)
+
+# set the url for the NOAA source data
+noaa_url <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+
+# if needed, download the storm data
+if(!file.exists("StormData.csv.bz2")) {
+    download.file(url = noaa_url, destfile = "StormData.csv.bz2", method = "curl") # use curl method for MACs
+}
+
+# get the download date
+dateDownloaded <- date()
+
+# unzip and read in the data file - be patient, takes a while
+storm_data <- read.csv(file = "StormData.csv.bz2")
+```
+
+This analysis uses the NOAA severe weather events data, downloaded from [NOAA](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2)  on `r dateDownloaded`.
+
+In the section below, I pre-process the data so as to answer the questions above. I use the [Storm Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf) to identify and understand the key variables in the dataset. 
+
+Table 1 on p6 of that file shows all the types of storm events (as indicated in the EVTYPE variable).
+
+At this point I decide to keep just the population health and economic consequences variables needed for the analysis: "EVTYPE", "FATALITIES", "INJURIES", "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP".
+
+#### Selecting target variables
+
+```{r preprocessing}
+# look at the variables in the dataset
+names(storm_data)
+
+# keep just the variables necessary for the analysis
+stormsmall <- storm_data[,c("EVTYPE", "FATALITIES", "INJURIES", "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP")]
+
+# remove the larger dataset to free up memory
+rm(storm_data)
+```
+
+#### Transforming variables
+
+The event type, fatalities and injuries variables are ready to be analysed but the property damage and crop damage variables need further processing before analysis. In particular, the EXP variables are holding exponents for their respective columns and so need to be transformed.
+
+```{r processing}
+summary(stormsmall)
+head(stormsmall)
+table(stormsmall$PROPDMGEXP)
+table(stormsmall$CROPDMGEXP)
+```
+
+There are codes in the EXP columns. In these EXP columns, I assume that the "", "-", "?", "+" EXP codes are worth 1 each. I assume that the other values are the numbers of 0s to put after the 1. I set "B" as a billion, "H/h" as a hundred, "K/k" as a thousand, and "M/m" as a million. 
+
+Below, I make a table holding the EXP codes and their numeric values.
+
+```{r creating exp table}
+library(knitr)
+# make a look up table holding the EXP codes and their likely numeric values
+expcodes <- levels(stormsmall$PROPDMGEXP) #19 codes
+expvalues <- c(1, 1, 1, 1, 1, 10, 100, 1000, 10000, 100000, 1000000,
+               10000000, 100000000, 1000000000, 100, 100, 1000,
+               1000000, 1000000)
+exptable <- as.data.frame(cbind(expcodes, expvalues))
+kable(exptable)
+```
+
+Now I need to multiply the values in the PROPDMG column by the PROPDMGEXP column to get the real value of property damage. Likewise, I need to multiply the CROPDMG column by the CROPDMGEXP column to get the real value of crop damage. To do this, I need to join the new columns into my dataframe.
+
+```{r transforming exp columns, message=F, warning=F}
+
+# join in the expvalue column to the storm dataframe for PROPERTY damage
+library(dplyr)
+stormsmall<- left_join(x = stormsmall, y = exptable, by = setNames("expcodes","PROPDMGEXP"))
+
+# join in the expvalue column to the storm dataframe for CROP damage
+stormsmall<- left_join(x = stormsmall, y = exptable, by = setNames("expcodes","CROPDMGEXP"))
+
+# give the newly joined columns better names
+stormsmall <- rename(.data = stormsmall, PROPDMGVAL = expvalues.x, CROPDMGVAL = expvalues.y)
+
+# convert the newly joined columns to numeric class
+stormsmall$PROPDMGVAL <- as.numeric(levels(stormsmall$PROPDMGVAL))[stormsmall$PROPDMGVAL]
+
+stormsmall$CROPDMGVAL <- as.numeric(levels(stormsmall$CROPDMGVAL))[stormsmall$CROPDMGVAL]
+
+# calculate actual damages for PROPERTY and CROPS by multiplying the damage columns by the newly joined value columns
+stormsmall$PROPDMGTOT <- stormsmall$PROPDMG * stormsmall$PROPDMGVAL
+stormsmall$CROPDMGTOT <- stormsmall$CROPDMG * stormsmall$CROPDMGVAL
+```
+
+#### Aggregating variables by weather type
+Now that I have the damages as values, I need to aggregate injuries, fatalities, property damage, and crop damage totals by type of weather event.
+
+```{r aggregate by event}
+# calculate population harm by weather event
+pophealth <- stormsmall %>%
+                group_by(EVTYPE) %>%
+                summarise(total_fatalities = sum(FATALITIES),
+                            total_injuries = sum(INJURIES))
+# calculate economic harm by weather event
+damages <- stormsmall %>%
+                group_by(EVTYPE) %>%
+                summarise(total_propdamage = sum(PROPDMGTOT),
+                            total_cropdamage = sum(CROPDMGTOT))
+```
+
+#### Making separate data frames
+Here I make a separate data frame for each of the key measures of interest and then sort these data frames by most harmful weather event.
+
+```{r making mini datasets}
+# create four datasets sorted by amount of harm
+fatalities <- arrange(.data = pophealth, desc(total_fatalities))
+injuries <- arrange(.data = pophealth, desc(total_injuries))
+properties <- arrange(.data = damages, desc(total_propdamage))
+crops <- arrange(.data = damages, desc(total_cropdamage))
+```
+
+#### Converting damage into millions of dollars
+I convert the damage totals into millions of dollars for ease of interpretation.
+
+```{r damage in millions}
+# transform property and crop damage into millions of dollars
+properties$total_propdamage_m = round(properties$total_propdamage/1000000, 0)
+crops$total_cropdamage_m = round(crops$total_cropdamage/1000000, 0)
+```
+## Results
+
+The plots below shows the top 10 most harmful types of severe weather events with regards to population health (measured by number of fatalities and number of injuries) and economic consequences (measured by millions of dollars worth of property damage and of crop damage).
+
+The first plot below shows that **tornadoes** have been the most harmful weather event by far for *population health*, causing thousands of fatalities and injuries.
+
+```{r results1, message=F, warning=F}
+library(ggplot2) # for plotting
+library(stringr) # for str_wrap function for wrapping legend text
+library(extrafont) # for fonts
+library(scales) # for formatting numbers
+
+# run loadfonts() if needed
+# loadfonts() 
+
+g1 <- ggplot(data = fatalities[1:10,], mapping = aes(x = reorder(EVTYPE, -total_fatalities), y = total_fatalities)) + 
+    geom_bar(colour = "blue4", fill = "blue4", stat = "identity") +
+    xlab("Weather Event") +
+    ylab("Total fatalities") +
+    ggtitle("Fatalities") +
+    scale_x_discrete(labels = function(x) str_wrap(x, width = 7)) +
+    geom_text(aes(label = comma(total_fatalities)), vjust=-1.5, colour="black", size = 3) +
+    theme_grey(base_family = "Arial") +
+    theme(axis.text.x = element_text(size = 7))
+
+g2 <- ggplot(data = injuries[1:10,], mapping = aes(x = reorder(EVTYPE, -total_injuries), y = total_injuries)) + 
+    geom_bar(colour = "red4", fill = "red4", stat = "identity") +
+    xlab("Weather Event") +
+    ylab("Total injuries") +
+    ggtitle("Injuries") +
+    scale_x_discrete(labels = function(x) str_wrap(x, width = 7)) +
+    geom_text(aes(label = comma(total_injuries)), vjust=-1.5, colour="black", size = 3) +
+    theme_grey(base_family = "Arial") +
+    theme(axis.text.x = element_text(size = 7))
+
+# put the first two plots in one grid
+library(gridExtra) # for side-by-side plots
+grid.arrange(g1, g2, nrow=2, top = "Ten Most Harmful Weather Events For Population Health: United States 1950-2011")
+```
+
+The second plot below shows that **floods** have been the weather event with the greatest *economic consequences* in terms of *both* property and crop damage, whilst **drought** has been the worst type of weather for crop damage in particular.
+
+```{r results2, message=F, warning=F}
+g3 <- ggplot(data = properties[1:10,], mapping = aes(x = reorder(EVTYPE, -total_propdamage_m), y = total_propdamage_m)) + 
+    geom_bar(colour = "green4", fill = "green4", stat = "identity") +
+    xlab("Weather Event") +
+    ylab("Total Property Damage \n ($ millions)") +
+    ggtitle("Property Damage") +
+    scale_x_discrete(labels = function(x) str_wrap(x, width = 7)) +
+    geom_text(aes(label = comma(total_propdamage_m)), vjust=-1.5, colour="black", size = 3) +
+    scale_y_continuous(labels = comma) +
+    theme_grey(base_family = "Arial") +
+    theme(axis.text.x = element_text(size = 7))
+
+g4 <- ggplot(data = crops[1:10,], mapping = aes(x = reorder(EVTYPE, -total_cropdamage_m), y = total_cropdamage_m)) + 
+    geom_bar(colour = "gold1", fill = "gold1", stat = "identity") +
+    xlab("Weather Event") +
+    ylab("Total Crop Damage \n ($ millions)") +
+    ggtitle("Crop Damage") +
+    scale_x_discrete(labels = function(x) str_wrap(x, width = 7)) +
+    geom_text(aes(label = comma(total_cropdamage_m)), vjust=-1.5, colour="black", size = 3) +
+    scale_y_continuous(labels = comma) +
+    theme_grey(base_family = "Arial") +
+    theme(axis.text.x = element_text(size = 7))
+
+# put the second two plots in one grid
+library(gridExtra) # for side-by-side plots
+grid.arrange(g3, g4, nrow=2, top = "Ten Most Harmful Weather Events For The Economy: United States 1950-2011")
+```
+
